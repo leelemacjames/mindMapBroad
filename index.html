@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mind Map</title>
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --panel: #121318;
+      --text: #e8e8ea;
+      --muted: #a9a9b3;
+      --line: rgba(255,255,255,0.25);
+      --shadow: 0 10px 25px rgba(0,0,0,0.35);
+      --radius: 18px;
+      --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    }
+    body {
+      margin: 0;
+      background: radial-gradient(1000px 700px at 30% 20%, #171a27, var(--bg));
+      color: var(--text);
+      font-family: var(--font);
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      position: absolute;
+      top: 12px; left: 12px; right: 12px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .hud {
+      pointer-events: auto;
+      background: rgba(18,19,24,0.78);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 14px;
+      padding: 10px 12px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .hud input {
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 10px;
+      padding: 8px 10px;
+      width: 260px;
+      outline: none;
+    }
+    .hud button {
+      background: rgba(255,255,255,0.10);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 10px;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    .hud button:hover { background: rgba(255,255,255,0.16); }
+    .hint { color: var(--muted); font-size: 12px; pointer-events: auto; }
+
+    /* SVG + nodes */
+    #stage {
+      width: 100vw;
+      height: 100vh;
+      cursor: grab;
+    }
+    #stage:active { cursor: grabbing; }
+
+    .edge {
+      stroke: var(--line);
+      stroke-width: 2;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+
+    .node {
+      filter: drop-shadow(0 10px 15px rgba(0,0,0,0.35));
+    }
+    .pill {
+      rx: 999;
+      ry: 999;
+      stroke: rgba(255,255,255,0.18);
+      stroke-width: 1;
+    }
+    .label {
+      font-size: 14px;
+      font-weight: 650;
+      fill: #101114;
+      pointer-events: none;
+      user-select: none;
+    }
+    .label.small {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    /* Clickable overlay (in SVG we use pointer events on group) */
+    .clickable { cursor: pointer; }
+    .clickable:hover .pill { stroke: rgba(255,255,255,0.45); }
+    .clickable:hover { filter: drop-shadow(0 14px 22px rgba(0,0,0,0.45)); }
+
+    .tag {
+      font-size: 11px;
+      fill: rgba(232,232,234,0.85);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    /* Tooltip */
+    .tooltip {
+      position: absolute;
+      z-index: 10;
+      background: rgba(18,19,24,0.92);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      max-width: 320px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+      font-size: 13px;
+      color: var(--text);
+      display: none;
+      pointer-events: none;
+    }
+    .tooltip .t { font-weight: 700; margin-bottom: 6px; }
+    .tooltip .d { color: var(--muted); line-height: 1.35; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="hud">
+      <input id="search" placeholder="Search nodes (e.g., kinematics, PV/T, optics)..." />
+      <button id="reset">Reset view</button>
+    </div>
+    <div class="hint">
+      Drag to pan • Mousewheel to zoom • Click a node to open its page
+    </div>
+  </header>
+
+  <div id="tip" class="tooltip" aria-hidden="true"></div>
+
+  <svg id="stage" viewBox="0 0 1400 900" role="img" aria-label="Mind map">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.25)"></path>
+      </marker>
+    </defs>
+
+    <!-- PANNABLE+ZOOMABLE GROUP -->
+    <g id="world">
+      <!-- Edges (simple straight lines; you can swap to curves if you want) -->
+      <path class="edge" id="e-center-kin" />
+      <path class="edge" id="e-center-thermo" />
+      <path class="edge" id="e-center-particle" />
+      <path class="edge" id="e-center-fields" />
+      <path class="edge" id="e-center-bodies" />
+
+      <!-- Kinematics satellites -->
+      <path class="edge" id="e-kin-calc" />
+      <path class="edge" id="e-kin-scales" />
+
+      <!-- Thermodynamics satellites -->
+      <path class="edge" id="e-thermo-pvt" />
+      <path class="edge" id="e-thermo-eos" />
+      <path class="edge" id="e-thermo-thermal" />
+      <path class="edge" id="e-thermo-pvd" />
+
+      <!-- Particle physics satellites -->
+      <path class="edge" id="e-part-rad" />
+      <path class="edge" id="e-part-lines" />
+      <path class="edge" id="e-part-binding" />
+      <path class="edge" id="e-part-atomic" />
+
+      <!-- Mechanics of fields satellites -->
+      <path class="edge" id="e-field-optics" />
+      <path class="edge" id="e-field-sonics" />
+      <path class="edge" id="e-field-carriers" />
+
+      <!-- Mechanics of bodies satellites -->
+      <path class="edge" id="e-body-vectors" />
+      <path class="edge" id="e-body-accel" />
+      <path class="edge" id="e-body-inertial" />
+      <path class="edge" id="e-body-traj" />
+
+      <!-- Nodes -->
+      <!-- Center -->
+      <g class="node clickable" data-id="center" data-href="observe-measure-model.html"
+         data-title="Observe • Measure • Model"
+         data-desc="The central workflow: observation → measurement → modelling."
+      >
+        <rect class="pill" x="610" y="410" width="180" height="80" fill="#cfd2dc" />
+        <text class="label" x="700" y="445" text-anchor="middle">Observe</text>
+        <text class="label" x="700" y="468" text-anchor="middle">Measure</text>
+        <text class="label" x="700" y="491" text-anchor="middle">Model</text>
+      </g>
+
+      <!-- Main clusters -->
+      <g class="node clickable" data-id="kin" data-href="kinematics/index.html"
+         data-title="Kinematics"
+         data-desc="Differential motion, velocity/gradients, directed quantities, logs/power laws."
+      >
+        <rect class="pill" x="630" y="260" width="140" height="60" fill="#b7a8df" />
+        <text class="label" x="700" y="297" text-anchor="middle">Kinematics</text>
+      </g>
+
+      <g class="node clickable" data-id="thermo" data-href="thermodynamics/index.html"
+         data-title="Thermodynamics"
+         data-desc="Equation of state, macroscopic measures, thermal equilibrium, PV/T."
+      >
+        <rect class="pill" x="920" y="330" width="180" height="70" fill="#f1a6b3" />
+        <text class="label" x="1010" y="372" text-anchor="middle">Thermodynamics</text>
+      </g>
+
+      <g class="node clickable" data-id="particle" data-href="particle-physics/index.html"
+         data-title="Particle Physics"
+         data-desc="Radiation, fusion, spectral emission lines, binding energy / mass defect."
+      >
+        <rect class="pill" x="870" y="520" width="210" height="70" fill="#f1d27a" />
+        <text class="label" x="975" y="562" text-anchor="middle">Particle Physics</text>
+      </g>
+
+      <g class="node clickable" data-id="fields" data-href="fields/index.html"
+         data-title="Mechanics of Fields"
+         data-desc="Interacting B-fields, pressure waves, charges, carriers of attraction."
+      >
+        <rect class="pill" x="430" y="560" width="210" height="70" fill="#bde7b0" />
+        <text class="label" x="535" y="602" text-anchor="middle">Mechanics of</text>
+        <text class="label" x="535" y="623" text-anchor="middle">Fields</text>
+      </g>
+
+      <g class="node clickable" data-id="bodies" data-href="mechanics-of-bodies/index.html"
+         data-title="Mechanics of Bodies"
+         data-desc="Mass, central forces, inertial motion & statics, trajectories."
+      >
+        <rect class="pill" x="250" y="360" width="220" height="80" fill="#aee7f0" />
+        <text class="label" x="360" y="405" text-anchor="middle">Mechanics of</text>
+        <text class="label" x="360" y="428" text-anchor="middle">bodies</text>
+      </g>
+
+      <!-- Kinematics satellites -->
+      <g class="node clickable" data-id="calc" data-href="kinematics/calculus.html"
+         data-title="Calculus of differential and infinitesimal motion"
+         data-desc="Differentials, instantaneous velocity, gradients."
+      >
+        <rect class="pill" x="520" y="120" width="320" height="58" fill="#cfc6ee" />
+        <text class="label small" x="680" y="155" text-anchor="middle">Calculus of differential and</text>
+        <text class="label small" x="680" y="172" text-anchor="middle">infinitesimal motion</text>
+      </g>
+
+      <g class="node clickable" data-id="scales" data-href="kinematics/scales.html"
+         data-title="Scales and order of magnitude"
+         data-desc="Scaling arguments, dimensional estimates, logs and power laws."
+      >
+        <rect class="pill" x="870" y="120" width="240" height="58" fill="#cfc6ee" />
+        <text class="label small" x="990" y="155" text-anchor="middle">Scales and order of</text>
+        <text class="label small" x="990" y="172" text-anchor="middle">magnitude</text>
+      </g>
+
+      <!-- Thermodynamics satellites -->
+      <g class="node clickable" data-id="pvt" data-href="thermodynamics/pvt.html"
+         data-title="PV/T"
+         data-desc="Ideal gas relation; a compact macroscopic summary."
+      >
+        <rect class="pill" x="1150" y="330" width="90" height="60" fill="#ffd1da" />
+        <text class="label" x="1195" y="366" text-anchor="middle">PV/T</text>
+      </g>
+
+      <g class="node clickable" data-id="eos" data-href="thermodynamics/equation-of-state.html"
+         data-title="Equation of state"
+         data-desc="Connects macroscopic variables: P, V, T, etc."
+      >
+        <rect class="pill" x="1110" y="230" width="180" height="58" fill="#ffd1da" />
+        <text class="label small" x="1200" y="265" text-anchor="middle">Equation of</text>
+        <text class="label small" x="1200" y="282" text-anchor="middle">state</text>
+      </g>
+
+      <g class="node clickable" data-id="thermal" data-href="thermodynamics/thermal-equilibrium.html"
+         data-title="Thermal equilibrium"
+         data-desc="Equilibrium ideas; temperature as a state variable."
+      >
+        <rect class="pill" x="1110" y="430" width="220" height="58" fill="#ffd1da" />
+        <text class="label small" x="1220" y="465" text-anchor="middle">Thermal equilibrium</text>
+      </g>
+
+      <g class="node clickable" data-id="pvd" data-href="thermodynamics/pressure-vs-density.html"
+         data-title="Pressure versus density"
+         data-desc="How pressure scales with density across regimes."
+      >
+        <rect class="pill" x="1110" y="90" width="240" height="58" fill="#ffd1da" />
+        <text class="label small" x="1230" y="125" text-anchor="middle">Pressure versus density</text>
+      </g>
+
+      <!-- Particle physics satellites -->
+      <g class="node clickable" data-id="rad" data-href="particle-physics/radiation.html"
+         data-title="Radiation"
+         data-desc="Emission/absorption; energy transport."
+      >
+        <rect class="pill" x="1120" y="520" width="160" height="58" fill="#ffe5a9" />
+        <text class="label small" x="1200" y="555" text-anchor="middle">Radiation</text>
+      </g>
+
+      <g class="node clickable" data-id="lines" data-href="particle-physics/spectral-lines.html"
+         data-title="Spectral emission lines"
+         data-desc="Discrete spectra as fingerprints of transitions."
+      >
+        <rect class="pill" x="1120" y="600" width="240" height="58" fill="#ffe5a9" />
+        <text class="label small" x="1240" y="635" text-anchor="middle">Spectral emission lines</text>
+      </g>
+
+      <g class="node clickable" data-id="binding" data-href="particle-physics/binding-energy.html"
+         data-title="Binding Energy = mass defect"
+         data-desc="Mass-energy equivalence in nuclei; binding curves."
+      >
+        <rect class="pill" x="860" y="690" width="280" height="58" fill="#ffe5a9" />
+        <text class="label small" x="1000" y="725" text-anchor="middle">Binding Energy = mass defect</text>
+      </g>
+
+      <g class="node clickable" data-id="atomic" data-href="particle-physics/atomic-nuclear.html"
+         data-title="Atomic & Nuclear physics"
+         data-desc="Atoms, nuclei, transitions, interactions."
+      >
+        <rect class="pill" x="1160" y="690" width="220" height="58" fill="#ffe5a9" />
+        <text class="label small" x="1270" y="725" text-anchor="middle">Atomic & Nuclear physics</text>
+      </g>
+
+      <!-- Mechanics of fields satellites -->
+      <g class="node clickable" data-id="optics" data-href="fields/optics.html"
+         data-title="Optics"
+         data-desc="Light propagation; reflection/refraction; wave optics."
+      >
+        <rect class="pill" x="240" y="680" width="140" height="58" fill="#d6f4cf" />
+        <text class="label small" x="310" y="715" text-anchor="middle">Optics</text>
+      </g>
+
+      <g class="node clickable" data-id="sonics" data-href="fields/sonics-acoustics.html"
+         data-title="Sonics & Acoustics"
+         data-desc="Pressure waves and sound propagation."
+      >
+        <rect class="pill" x="380" y="680" width="220" height="58" fill="#d6f4cf" />
+        <text class="label small" x="490" y="715" text-anchor="middle">Sonics & Acoustics</text>
+      </g>
+
+      <g class="node clickable" data-id="carriers" data-href="fields/carriers-of-attraction.html"
+         data-title="Carriers of attraction"
+         data-desc="Forces mediated by fields (conceptual carriers)."
+      >
+        <rect class="pill" x="610" y="680" width="220" height="58" fill="#d6f4cf" />
+        <text class="label small" x="720" y="715" text-anchor="middle">Carriers of attraction</text>
+      </g>
+
+      <!-- Mechanics of bodies satellites -->
+      <g class="node clickable" data-id="vectors" data-href="mechanics-of-bodies/vectors.html"
+         data-title="Vectors"
+         data-desc="Directed quantities and components."
+      >
+        <rect class="pill" x="90" y="120" width="130" height="58" fill="#c8eff7" />
+        <text class="label small" x="155" y="155" text-anchor="middle">Vectors</text>
+      </g>
+
+      <g class="node clickable" data-id="accel" data-href="mechanics-of-bodies/acceleration.html"
+         data-title="Acceleration"
+         data-desc="Change of velocity; the driver of trajectories."
+      >
+        <rect class="pill" x="70" y="230" width="160" height="58" fill="#c8eff7" />
+        <text class="label small" x="150" y="265" text-anchor="middle">Acceleration</text>
+      </g>
+
+      <g class="node clickable" data-id="inertial" data-href="mechanics-of-bodies/inertial-statics.html"
+         data-title="Inertial motion & statics"
+         data-desc="Rest/motion in frames; balance of forces."
+      >
+        <rect class="pill" x="60" y="360" width="210" height="58" fill="#c8eff7" />
+        <text class="label small" x="165" y="395" text-anchor="middle">Inertial motion & statics</text>
+      </g>
+
+      <g class="node clickable" data-id="traj" data-href="mechanics-of-bodies/trajectories.html"
+         data-title="Trajectories (Parabola and ellipse)"
+         data-desc="Projectile motion and orbital forms."
+      >
+        <rect class="pill" x="80" y="490" width="270" height="58" fill="#c8eff7" />
+        <text class="label small" x="215" y="525" text-anchor="middle">Trajectories (Parabola and ellipse)</text>
+      </g>
+
+      <!-- Small annotations (optional) -->
+      <text class="tag" x="705" y="255" text-anchor="middle">Nature answers to Maths</text>
+    </g>
+  </svg>
+
+  <script>
+    // ---------- Node layout data (for drawing edges) ----------
+    // We keep a lightweight map: id -> (center x,y)
+    const C = (x,y) => ({x,y});
+
+    const centers = {
+      center: C(700, 450),
+      kin: C(700, 290),
+      thermo: C(1010, 365),
+      particle: C(975, 555),
+      fields: C(535, 595),
+      bodies: C(360, 400),
+
+      calc: C(680, 149),
+      scales: C(990, 149),
+
+      pvt: C(1195, 360),
+      eos: C(1200, 259),
+      thermal: C(1220, 459),
+      pvd: C(1230, 119),
+
+      rad: C(1200, 549),
+      lines: C(1240, 629),
+      binding: C(1000, 719),
+      atomic: C(1270, 719),
+
+      optics: C(310, 709),
+      sonics: C(490, 709),
+      carriers: C(720, 709),
+
+      vectors: C(155, 149),
+      accel: C(150, 259),
+      inertial: C(165, 389),
+      traj: C(215, 519),
+    };
+
+    function setEdge(edgeId, fromId, toId) {
+      const e = document.getElementById(edgeId);
+      const a = centers[fromId], b = centers[toId];
+      if (!e || !a || !b) return;
+      e.setAttribute("d", `M ${a.x} ${a.y} L ${b.x} ${b.y}`);
+    }
+
+    // Center to main clusters
+    setEdge("e-center-kin", "center", "kin");
+    setEdge("e-center-thermo", "center", "thermo");
+    setEdge("e-center-particle", "center", "particle");
+    setEdge("e-center-fields", "center", "fields");
+    setEdge("e-center-bodies", "center", "bodies");
+
+    // Kinematics satellites
+    setEdge("e-kin-calc", "kin", "calc");
+    setEdge("e-kin-scales", "kin", "scales");
+
+    // Thermodynamics satellites
+    setEdge("e-thermo-pvt", "thermo", "pvt");
+    setEdge("e-thermo-eos", "thermo", "eos");
+    setEdge("e-thermo-thermal", "thermo", "thermal");
+    setEdge("e-thermo-pvd", "thermo", "pvd");
+
+    // Particle physics satellites
+    setEdge("e-part-rad", "particle", "rad");
+    setEdge("e-part-lines", "particle", "lines");
+    setEdge("e-part-binding", "particle", "binding");
+    setEdge("e-part-atomic", "particle", "atomic");
+
+    // Mechanics of fields satellites
+    setEdge("e-field-optics", "fields", "optics");
+    setEdge("e-field-sonics", "fields", "sonics");
+    setEdge("e-field-carriers", "fields", "carriers");
+
+    // Mechanics of bodies satellites
+    setEdge("e-body-vectors", "bodies", "vectors");
+    setEdge("e-body-accel", "bodies", "accel");
+    setEdge("e-body-inertial", "bodies", "inertial");
+    setEdge("e-body-traj", "bodies", "traj");
+
+    // ---------- Click / tooltip ----------
+    const tip = document.getElementById("tip");
+
+    function showTip(evt, title, desc) {
+      tip.style.display = "block";
+      tip.innerHTML = `<div class="t">${title}</div><div class="d">${desc}</div>`;
+      moveTip(evt);
+    }
+    function moveTip(evt) {
+      const pad = 14;
+      const x = evt.clientX + pad;
+      const y = evt.clientY + pad;
+      tip.style.left = x + "px";
+      tip.style.top = y + "px";
+    }
+    function hideTip() { tip.style.display = "none"; }
+
+    document.querySelectorAll(".node.clickable").forEach(g => {
+      g.addEventListener("click", () => {
+        const href = g.dataset.href;
+        if (href) window.location.href = href; // relative link to another HTML page
+      });
+      g.addEventListener("mousemove", (evt) => {
+        showTip(evt, g.dataset.title || "", g.dataset.desc || "");
+      });
+      g.addEventListener("mouseleave", hideTip);
+    });
+
+    // ---------- Pan + zoom (simple, robust) ----------
+    const svg = document.getElementById("stage");
+    const world = document.getElementById("world");
+    let isPanning = false;
+    let start = {x:0, y:0};
+    let pan = {x:0, y:0};
+    let scale = 1;
+
+    function applyTransform() {
+      world.setAttribute("transform", `translate(${pan.x} ${pan.y}) scale(${scale})`);
+    }
+
+    svg.addEventListener("mousedown", (e) => {
+      // don't start panning if user clicked a node
+      if (e.target.closest && e.target.closest(".clickable")) return;
+      isPanning = true;
+      start = {x: e.clientX - pan.x, y: e.clientY - pan.y};
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!isPanning) return;
+      pan.x = e.clientX - start.x;
+      pan.y = e.clientY - start.y;
+      applyTransform();
+    });
+
+    window.addEventListener("mouseup", () => { isPanning = false; });
+
+    svg.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const delta = -Math.sign(e.deltaY) * 0.08;
+      const next = Math.min(2.2, Math.max(0.5, scale * (1 + delta)));
+
+      // Zoom around mouse position
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      const ctm = world.getScreenCTM().inverse();
+      const mouseBefore = pt.matrixTransform(ctm);
+
+      scale = next;
+      applyTransform();
+
+      const ctm2 = world.getScreenCTM().inverse();
+      const mouseAfter = pt.matrixTransform(ctm2);
+
+      pan.x += (mouseAfter.x - mouseBefore.x) * scale;
+      pan.y += (mouseAfter.y - mouseBefore.y) * scale;
+      applyTransform();
+    }, { passive: false });
+
+    // ---------- Search / highlight ----------
+    const search = document.getElementById("search");
+    const resetBtn = document.getElementById("reset");
+
+    function clearHighlights() {
+      document.querySelectorAll(".node .pill").forEach(r => r.style.strokeWidth = "1");
+      document.querySelectorAll(".node").forEach(g => g.style.opacity = "1");
+    }
+
+    function highlight(query) {
+      const q = query.trim().toLowerCase();
+      if (!q) { clearHighlights(); return; }
+
+      document.querySelectorAll(".node").forEach(g => {
+        const text = (g.dataset.title || "").toLowerCase();
+        const match = text.includes(q);
+        g.style.opacity = match ? "1" : "0.18";
+        const pill = g.querySelector(".pill");
+        if (pill) pill.style.strokeWidth = match ? "3" : "1";
+      });
+    }
+
+    search.addEventListener("input", () => highlight(search.value));
+
+    resetBtn.addEventListener("click", () => {
+      pan = {x:0, y:0};
+      scale = 1;
+      applyTransform();
+      search.value = "";
+      clearHighlights();
+    });
+
+    applyTransform();
+  </script>
+</body>
+</html>
